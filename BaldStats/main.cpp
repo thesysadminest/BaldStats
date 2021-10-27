@@ -13,6 +13,14 @@
 
 #include <vector>
 
+
+struct bedwarsPlayer {
+	wxString playername, displayname;
+	int bwlevel, finalk, finald;
+	wxString uuid;
+};
+
+
 class Frame : public wxFrame {
 public:
 	Frame() : wxFrame(nullptr, wxID_ANY, "Testing", wxDefaultPosition, wxSize(500, 500)) {
@@ -20,20 +28,21 @@ public:
 		q1->SetHint("Hypixel API");
 		q1->SetValue("f57c9f4a-175b-430c-a261-d8c199abd927");
 		q2->SetHint("Nickname");
-		wxMessageDialog(this, "Кто бы ты ни был, пожалуйста, закрой программу. Её использование в данный момент ни к чему не приведёт", "Внимание!", wxOK | wxCENTRE | wxICON_ERROR).ShowModal();
+		wxMessageDialog(this, "Please, close this app. It doesn't works properly now", "Important!", wxOK | wxCENTRE | wxICON_ERROR).ShowModal();
 
-		wxMenu* menuHelp = new wxMenu;
-		menuHelp->AppendRadioItem(-1, "elem");
-		menuHelp->AppendRadioItem(6, "ent");
-		menuHelp->Enable(6, false);
+		wxMenu* menuMode = new wxMenu;
+		menuMode->AppendRadioItem(1, "BedWars");
+		menuMode->AppendRadioItem(2, "SkyWars");
+		menuMode->Enable(2, false);
 		wxMenuBar* menuBar = new wxMenuBar;
-		menuBar->Append(menuHelp, "&Help");
+		menuBar->Append(menuMode, "&Mode");
 		SetMenuBar(menuBar);
 		//CreateStatusBar();
 		//SetStatusText("Welcome to wxWidgets!");
 
 		//text->SetEditable(false);
 		//q2->SetEditable(false);
+		playerlist.reserve(16);
 	}
 
 private:
@@ -43,6 +52,8 @@ private:
 	wxTextCtrl* q1 = new wxTextCtrl(panel, wxID_ANY, wxEmptyString, { 100, 10 }, wxSize((80), (20)));
 	wxTextCtrl* q2 = new wxTextCtrl(panel, wxID_ANY, wxEmptyString, { 200, 10 }, wxSize((80), (20)));
 	wxTextCtrl* command = new wxTextCtrl(panel, wxID_ANY, wxEmptyString, { 50, 370 }, wxSize((400), (20)));
+
+	std::vector <bedwarsPlayer> playerlist;
 
 
 	void ReadLine(wxCommandEvent& e) {
@@ -65,9 +76,10 @@ private:
 		//for (auto i : parsed) wxLogInfo(i);
 
 		if (parsed.size() == 3) {
-			// the player quits the lobby
-			if (parsed[1] == "has" && parsed[2] == "quit") {
-				wxLogInfo("the player quits the lobby");
+			// player quits the lobby
+			if (parsed[1] == "has" && parsed[2] == "quit!") {
+				wxLogInfo("player quits the lobby");
+				removePlayer(parsed[0]);
 			}
 		}
 		else if (parsed.size() == 4) {
@@ -82,6 +94,7 @@ private:
 			// player joins the lobby
 			else if (parsed[1] == "has" && parsed[2] == "joined") {
 				wxLogInfo("player joins the lobby");
+				addPlayer(parsed[0]);
 			}
 		}
 		else if (parsed.size() == 5) {
@@ -101,7 +114,7 @@ private:
 			}
 		}
 		else if (parsed.size() == 9 || parsed.size() == 12) {
-			// the party gets disbanded
+			// party gets disbanded
 			if (parsed[1] == "party" && parsed[3] == "disbanded") {
 				wxLogInfo("the party gets disbanded");
 			}
@@ -118,29 +131,82 @@ private:
 	}
 
 
-	void getPlayerStats(wxCommandEvent& e) {
-		wxString json = text->GetValue();
-		int player_pos = jsonGetPos(0, "player", json);
-		wxString displayname = jsonGetValue(jsonGetPos(player_pos, "displayname", json), json);
-		wxString uuid = jsonGetValue(jsonGetPos(player_pos, "uuid", json), json);
-		int achievements_pos = jsonGetPos(player_pos, "achievements", json);
-		wxString bwlevel = jsonGetValue(jsonGetPos(achievements_pos, "bedwars_level", json), json);
-		int bedwars_pos = jsonGetPos(jsonGetPos(player_pos, "stats", json), "Bedwars", json);
-		wxString finalk = jsonGetValue(jsonGetPos(bedwars_pos, "final_kills_bedwars", json), json);
-		wxString finald = jsonGetValue(jsonGetPos(bedwars_pos, "final_deaths_bedwars", json), json);
-		wxLogMessage(displayname);
+	int convertStringToInt(wxString s) {
+		int n = 0;
+		for (unsigned int i = 0; i < s.size(); ++i) {
+			n *= 10;
+			n += int((char)s[i] - '0');
+		}
+		return n;
+	}
+
+
+	bedwarsPlayer getPlayerStats(wxString* json_ptr) {
+		//wxString json = text->GetValue();
+		int player_pos = jsonGetPos(0, "player", json_ptr);
+		int displayname_pos = jsonGetPos(player_pos, "displayname", json_ptr);
+		wxString displayname = jsonGetValue(displayname_pos, json_ptr);
+		wxString uuid = jsonGetValue(jsonGetPos(player_pos, "uuid", json_ptr), json_ptr);
+		int achievements_pos = jsonGetPos(player_pos, "achievements", json_ptr);
+		wxString s_bwlevel = jsonGetValue(jsonGetPos(achievements_pos, "bedwars_level", json_ptr), json_ptr);
+		int stats_pos = jsonGetPos(player_pos, "stats", json_ptr);
+		int bedwars_pos = jsonGetPos(stats_pos, "Bedwars", json_ptr);
+		wxString s_finalk = jsonGetValue(jsonGetPos(bedwars_pos, "final_kills_bedwars", json_ptr), json_ptr);
+		wxString s_finald = jsonGetValue(jsonGetPos(bedwars_pos, "final_deaths_bedwars", json_ptr), json_ptr);
+		int bwlevel = convertStringToInt(s_bwlevel), finalk = convertStringToInt(s_finalk), finald = convertStringToInt(s_finald);
+		/*wxLogMessage(displayname);
 		wxLogMessage(uuid);
-		wxLogMessage(bwlevel);
-		wxLogMessage(finalk);
-		wxLogMessage(finald);
+		wxLogMessage(s_bwlevel);
+		wxLogMessage(s_finalk);
+		wxLogMessage(s_finald);*/
+		return { wxEmptyString, displayname, bwlevel, finalk, finald, uuid };
+	}
+
+
+	void addPlayer(wxString player) {
+		wxString* request = fake_Request(player);
+		bedwarsPlayer res = getPlayerStats(request);
+		delete request;
+		res.playername = player;
+		playerlist.push_back(res);
+
+		text->Clear();
+		for (auto i : playerlist) {
+			text->WriteText(i.playername + " " + i.displayname + " " + wxString::Format("%d", i.bwlevel) + " " + wxString::Format("%d", i.finalk) + " " + wxString::Format("%d", i.finald) + " " + i.uuid);
+		}
+	}
+
+
+	void removePlayer(wxString player) {
+		unsigned int i = 0;
+		while (true) {
+			if (playerlist[i].playername == player) break;
+			++i;
+			if (i >= playerlist.size()) return;
+		}
+		if (i != playerlist.size() - 1) {
+			++i;
+			while (i < playerlist.size()) {
+				playerlist[i - 1] = playerlist[i];
+				++i;
+			}
+		}
+		playerlist.pop_back();
+
+		text->Clear();
+		for (auto i : playerlist) {
+			text->WriteText(i.playername + " " + i.displayname + " " + wxString::Format("%d", i.bwlevel) + " " + wxString::Format("%d", i.finalk) + " " + wxString::Format("%d", i.finald) + " " + i.uuid);
+		}
 	}
 
 
 	// returns index of ":" in " "key":"value {} []" "
-	// if not exist, returns -1 or runtime error;
-	int jsonGetPos(int start, wxString key, wxString& json) {
+	// if not exist, returns -1 or runtime error
+	int jsonGetPos(int start, wxString key, wxString* json_ptr) {
+		wxString json = *json_ptr;
 		int level = 0;
 		int index = start;
+		if (json[index + 1] == '{') ++index;
 		while (true) {
 			index += 2;
 			bool flag = true;
@@ -167,7 +233,7 @@ private:
 				}
 				++index;
 			}
-			else while (json[index] != ',') ++index;
+			else while (json[index] != ',' && json[index] != '}') ++index;
 			if (json[index] == '}') return -1;
 		}
 		return -1;
@@ -175,7 +241,8 @@ private:
 
 
 	// returns value after ":" index in " "key":"value" "
-	wxString jsonGetValue(int index, wxString& json) {
+	wxString jsonGetValue(int index, wxString* json_ptr) {
+		wxString json = *json_ptr;
 		if (index == -1) return wxEmptyString;
 		wxString res = wxEmptyString;
 		++index;
@@ -186,7 +253,7 @@ private:
 				++index;
 			}
 		}
-		else while (json[index] != ',') while (json[index] != ',') {
+		else while (json[index] != ',' && json[index] != '}') {
 			res.append(json[index]);
 			++index;
 		}
@@ -194,7 +261,13 @@ private:
 	}
 
 
-	void Request(wxCommandEvent& e) {
+	wxString* fake_Request(wxString player) {
+		wxString* res = new wxString("{\"success\":true,\"player\":{\"displayname\":\"####\",\"uuid\":\"****\",\"achievements\":{\"bedwars_level\":2222},\"stats\":{\"Bedwars\":{\"final_kills_bedwars\":4444,\"final_deaths_bedwars\":5555}}}}");
+		return res;
+	}
+
+
+	wxString* Request(wxCommandEvent& e) {
 		wxWebRequest request = wxWebSession::GetDefault().CreateRequest(
 			this,
 			"https://api.hypixel.net/player?key=" + q1->GetValue() + "&name=" + q2->GetValue()
@@ -208,12 +281,12 @@ private:
 			switch (evt.GetState()) {
 			case wxWebRequest::State_Completed:
 			{
-				wxString out = wxEmptyString;
-				wxStringOutputStream out_stream(&out);
+				wxString* out = new wxString;
+				wxStringOutputStream out_stream(&*out);
 				evt.GetResponse().GetStream()->Read(out_stream);
 				//wxLogInfo(out);
-				text->WriteText(out);
-				break;
+				//text->WriteText(out);
+				return out;
 			}
 			// Request failed
 			case wxWebRequest::State_Failed:
