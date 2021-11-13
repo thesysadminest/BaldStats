@@ -1,17 +1,19 @@
-#include <wx/app.h>
+#include <wx/app.h> // GUI
 #include <wx/frame.h>
 #include <wx/panel.h>
 #include <wx/button.h>
 #include <wx/textctrl.h>
 #include <wx/menu.h>
 #include <wx/msgdlg.h>
-
-#include <wx/sstream.h>
-#include <wx/webrequest.h>
-
-#include <wx/thread.h> //SPOILER??
-
+#include <wx/webrequest.h> // HTTPS requests
+#include <wx/sstream.h> // reading HTTPS response data
+#include <wx/thread.h> // watching logfile update
+#include <wx/textfile.h> // reading text file
 #include <vector>
+
+
+DECLARE_LOCAL_EVENT_TYPE(wxEVT_LOGFILE_UPDATE_EVENT, -1)
+DEFINE_LOCAL_EVENT_TYPE(wxEVT_LOGFILE_UPDATE_EVENT)
 
 
 struct bedwarsPlayer {
@@ -21,10 +23,46 @@ struct bedwarsPlayer {
 };
 
 
+class LogFileThread : public wxThread {
+public:
+	explicit LogFileThread(wxEvtHandler* parent) : wxThread() {
+		m_parent = parent;
+		logfile.Open(logfile_path);
+		logfile_lines_count = logfile.GetLineCount();
+		logfile.Close();
+	}
+
+	ExitCode Entry() {
+		while (true) {
+			logfile.Open(logfile_path);
+			while (logfile_lines_count != logfile.GetLineCount()) {
+				wxString* temp_line = new wxString();
+				*temp_line = logfile.GetLine(logfile_lines_count);
+				if (temp_line->size() > 40 && temp_line->substr(11, 28) == "[Client thread/INFO]: [CHAT]" && (*temp_line)[40] != '$') {
+					wxCommandEvent evt(wxEVT_LOGFILE_UPDATE_EVENT, wxID_ANY);
+					evt.SetClientData(temp_line);
+					m_parent->AddPendingEvent(evt);
+				}
+				++logfile_lines_count;
+			}
+			logfile.Close();
+			wxMilliSleep(200);
+		}
+		return ExitCode(nullptr);
+	}
+
+private:
+	wxEvtHandler* m_parent;
+	int logfile_lines_count;
+	wxTextFile logfile;
+	wxString logfile_path = "D:/Programming/C++/BaldStats/a.txt";
+};
+
+
 class Frame : public wxFrame {
 public:
 	Frame() : wxFrame(nullptr, wxID_ANY, "Testing", wxDefaultPosition, wxSize(500, 500)) {
-		button->Bind(wxEVT_BUTTON, &Frame::ReadLine, this);
+		//button->Bind(wxEVT_BUTTON, &Frame::ReadLine, this);
 		q1->SetHint("Hypixel API");
 		q1->SetValue("f57c9f4a-175b-430c-a261-d8c199abd927");
 		q2->SetHint("Nickname");
@@ -43,6 +81,7 @@ public:
 		//text->SetEditable(false);
 		//q2->SetEditable(false);
 		playerlist.reserve(16);
+		CreateLogFileThread();
 	}
 
 private:
@@ -55,19 +94,41 @@ private:
 
 	std::vector <bedwarsPlayer> playerlist;
 
+	LogFileThread* m_pThread;
+	DECLARE_EVENT_TABLE();
 
-	void ReadLine(wxCommandEvent& e) {
-		wxString line = command->GetValue();
-		command->SetValue(wxEmptyString);
-		if (line.size() < 40) return;
+
+	void CreateLogFileThread() {
+		m_pThread = new LogFileThread(this);
+		wxThreadError err = m_pThread->Create();
+
+		if (err != wxTHREAD_NO_ERROR) {
+			wxMessageBox(_("Couldn't create thread!"));
+			return;
+		}
+
+		err = m_pThread->Run();
+
+		if (err != wxTHREAD_NO_ERROR) {
+			wxMessageBox(_("Couldn't run thread!"));
+			return;
+		}
+	}
+
+	void ReadLine(wxCommandEvent& evt) {
+		wxString line = *(wxString*)evt.GetClientData();
+		delete evt.GetClientData();
+		text->WriteText(line);
+
+		/*if (line.size() < 40) return;
 		if (line.substr(11, 28) != "[Client thread/INFO]: [CHAT]") return;
-		if (line[40] == '§') return; // if current line is message in the chat 
+		if (line[40] == '§') return; // if current line is message in the chat */
 
 		std::vector<wxString> parsed;
 		wxString temp = wxEmptyString;
 		for (unsigned int i = 40; i < line.size(); ++i) {
 			if (line[i] == ' ') {
-				if (temp != "[VIP]") parsed.push_back(temp);
+				if (temp[0] != '[' && temp[temp.size() - 1] != ']') parsed.push_back(temp);
 				temp = wxEmptyString;
 			}
 			else temp.append(line[i]);
@@ -130,7 +191,6 @@ private:
 		return;
 	}
 
-
 	int convertStringToInt(wxString s) {
 		int n = 0;
 		for (unsigned int i = 0; i < s.size(); ++i) {
@@ -139,7 +199,6 @@ private:
 		}
 		return n;
 	}
-
 
 	bedwarsPlayer getPlayerStats(wxString* json_ptr) {
 		//wxString json = text->GetValue();
@@ -162,8 +221,8 @@ private:
 		return { wxEmptyString, displayname, bwlevel, finalk, finald, uuid };
 	}
 
-
 	void addPlayer(wxString player) {
+		return; // I will remove it later
 		wxString* request = fake_Request(player);
 		bedwarsPlayer res = getPlayerStats(request);
 		delete request;
@@ -176,8 +235,8 @@ private:
 		}
 	}
 
-
 	void removePlayer(wxString player) {
+		return; // I will remove it later
 		unsigned int i = 0;
 		while (true) {
 			if (playerlist[i].playername == player) break;
@@ -198,7 +257,6 @@ private:
 			text->WriteText(i.playername + " " + i.displayname + " " + wxString::Format("%d", i.bwlevel) + " " + wxString::Format("%d", i.finalk) + " " + wxString::Format("%d", i.finald) + " " + i.uuid);
 		}
 	}
-
 
 	// returns index of ":" in " "key":"value {} []" "
 	// if not exist, returns -1 or runtime error
@@ -239,7 +297,6 @@ private:
 		return -1;
 	}
 
-
 	// returns value after ":" index in " "key":"value" "
 	wxString jsonGetValue(int index, wxString* json_ptr) {
 		wxString json = *json_ptr;
@@ -260,12 +317,10 @@ private:
 		return res;
 	}
 
-
 	wxString* fake_Request(wxString player) {
 		wxString* res = new wxString("{\"success\":true,\"player\":{\"displayname\":\"####\",\"uuid\":\"****\",\"achievements\":{\"bedwars_level\":2222},\"stats\":{\"Bedwars\":{\"final_kills_bedwars\":4444,\"final_deaths_bedwars\":5555}}}}");
 		return res;
 	}
-
 
 	wxString* Request(wxCommandEvent& e) {
 		wxWebRequest request = wxWebSession::GetDefault().CreateRequest(
@@ -298,6 +353,11 @@ private:
 		request.Start();
 	}
 };
+
+
+BEGIN_EVENT_TABLE(Frame, wxFrame)
+EVT_COMMAND(wxID_ANY, wxEVT_LOGFILE_UPDATE_EVENT, Frame::ReadLine)
+END_EVENT_TABLE()
 
 
 class Program : public wxApp {
