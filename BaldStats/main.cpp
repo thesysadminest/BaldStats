@@ -43,6 +43,9 @@ public:
 					evt.SetClientData(temp_line);
 					m_parent->AddPendingEvent(evt);
 				}
+				else {
+					wxLogInfo("Logline rejected");
+				}
 				++logfile_lines_count;
 			}
 			logfile.Close();
@@ -62,11 +65,11 @@ private:
 class Frame : public wxFrame {
 public:
 	Frame() : wxFrame(nullptr, wxID_ANY, "Testing", wxDefaultPosition, wxSize(500, 500)) {
-		button->Bind(wxEVT_BUTTON, &Frame::Fake_2_Request, this);
+		//button->Bind(wxEVT_BUTTON, &Frame::, this);
 		q1->SetHint("Hypixel API");
 		q1->SetValue("f57c9f4a-175b-430c-a261-d8c199abd927");
 		q2->SetHint("Nickname");
-		//wxMessageDialog(this, "Please, close this app. It doesn't works properly now", "Important!", wxOK | wxCENTRE | wxICON_ERROR).ShowModal();
+		wxMessageDialog(this, "Please, close this app. It doesn't works properly now", "Important!", wxOK | wxCENTRE | wxICON_ERROR).ShowModal();
 
 		wxMenu* menuMode = new wxMenu;
 		menuMode->AppendRadioItem(1, "BedWars");
@@ -83,7 +86,8 @@ public:
 				wxString* out = new wxString;
 				wxStringOutputStream out_stream(&*out);
 				evt.GetResponse().GetStream()->Read(out_stream);
-				GetPlayerStats(out);
+				AddPlayer(out);
+				wxLogInfo("Request success");
 				//wxLogInfo(out);
 				//text->WriteText(out);
 				//return out;
@@ -102,7 +106,7 @@ public:
 		//text->SetEditable(false);
 		//q2->SetEditable(false);
 		playerlist.reserve(16);
-		//CreateLogFileThread();
+		CreateLogFileThread();
 	}
 
 private:
@@ -129,12 +133,6 @@ private:
 		Request("Lukefain10");
 	}
 
-	void GetRequest(wxString* out) {
-		text->WriteText((*out).substr(0, 40));
-		text->WriteText('\n');
-		wxLogInfo("done");
-	}
-
 	void CreateLogFileThread() {
 		m_pThread = new LogFileThread(this);
 		wxThreadError err = m_pThread->Create();
@@ -155,7 +153,8 @@ private:
 	void ReadLine(wxCommandEvent& evt) {
 		wxString line = *(wxString*)evt.GetClientData();
 		delete evt.GetClientData();
-		text->WriteText(line);
+		//text->WriteText(line);
+		wxLogInfo(line);
 
 		/*if (line.size() < 40) return;
 		if (line.substr(11, 28) != "[Client thread/INFO]: [CHAT]") return;
@@ -184,37 +183,43 @@ private:
 			// player joins the party
 			if (parsed[1] == "joined" && parsed[3] == "party") {
 				wxLogInfo("player joins the party");
+				Request(parsed[0]);
 			}
 			// you leave the party
 			else if (parsed[0] == "You" && parsed[1] == "left") {
 				wxLogInfo("you leave the party");
+				//DisbandParty()
 			}
 			// player joins the lobby
 			else if (parsed[1] == "has" && parsed[2] == "joined") {
 				wxLogInfo("player joins the lobby");
-				AddPlayer(parsed[0]);
+				//Request(parsed[0]);
 			}
 		}
 		else if (parsed.size() == 5) {
 			// player leaves the party
 			if (parsed[2] == "left" && parsed[4] == "party") {
 				wxLogInfo("player leaves the party");
+				RemovePlayer(parsed[0]);
 			}
 			// you join someone else's party
 			else if (parsed[0] == "You" && parsed[4] == "party!") {
 				wxLogInfo("you join someone else's party");
+				Request(parsed[3].substr(0, parsed[3].size() - 2));
 			}
 		}
 		else if (parsed.size() == 7) {
 			// player gets removed from the party
 			if (parsed[1] == "has" && parsed[3] == "removed") {
 				wxLogInfo("player gets removed from the party");
+				RemovePlayer(parsed[0]);
 			}
 		}
 		else if (parsed.size() == 9 || parsed.size() == 12) {
 			// party gets disbanded
 			if (parsed[1] == "party" && parsed[3] == "disbanded") {
 				wxLogInfo("the party gets disbanded");
+				//DisbandParty()
 			}
 		}
 		// lobby players list
@@ -222,7 +227,7 @@ private:
 			wxLogInfo("lobby players list");
 		}
 		// party players list
-		else if (parsed[2] == "partying") {
+		else if (parsed[0] == "You'll" && parsed[2] == "partying") {
 			wxLogInfo("party players list");
 		}
 		return;
@@ -255,25 +260,27 @@ private:
 		wxLogMessage(s_bwlevel);
 		wxLogMessage(s_finalk);
 		wxLogMessage(s_finald);*/
-		return { wxEmptyString, displayname, bwlevel, finalk, finald, uuid };
+		return { displayname, displayname, bwlevel, finalk, finald, uuid };
 	}
 
-	void AddPlayer(wxString player) {
-		return; // I will remove it later
-		wxString* request = Fake_Request(player);
-		bedwarsPlayer res = GetPlayerStats(request);
-		delete request;
-		res.playername = player;
+	void AddPlayer(wxString* response) {
+		//return; // I will remove it later
+		//wxString* request = Fake_Request(player);
+		bedwarsPlayer res = GetPlayerStats(response);
+		delete response;
+		//res.playername = player;
 		playerlist.push_back(res);
 
 		text->Clear();
+		text->WriteText("ACTUAL PLAYER LIST: \n");
 		for (auto i : playerlist) {
 			text->WriteText(i.playername + " " + i.displayname + " " + wxString::Format("%d", i.bwlevel) + " " + wxString::Format("%d", i.finalk) + " " + wxString::Format("%d", i.finald) + " " + i.uuid);
+			text->WriteText('\n');
 		}
 	}
 
 	void RemovePlayer(wxString player) {
-		return; // I will remove it later
+		//return; // I will remove it later
 		unsigned int i = 0;
 		while (true) {
 			if (playerlist[i].playername == player) break;
@@ -290,6 +297,7 @@ private:
 		playerlist.pop_back();
 
 		text->Clear();
+		text->WriteText("ACTUAL PLAYER LIST: \n");
 		for (auto i : playerlist) {
 			text->WriteText(i.playername + " " + i.displayname + " " + wxString::Format("%d", i.bwlevel) + " " + wxString::Format("%d", i.finalk) + " " + wxString::Format("%d", i.finald) + " " + i.uuid);
 		}
@@ -354,10 +362,11 @@ private:
 		return res;
 	}
 
-	wxString* Fake_Request(wxString player) {
-		wxString* res = new wxString("{\"success\":true,\"player\":{\"displayname\":\"####\",\"uuid\":\"****\",\"achievements\":{\"bedwars_level\":2222},\"stats\":{\"Bedwars\":{\"final_kills_bedwars\":4444,\"final_deaths_bedwars\":5555}}}}");
-		return res;
-	}
+	//void Fake_Request(wxCommandEvent& e, wxString player) {
+	//	wxString* res = new wxString("{\"success\":true,\"player\":{\"" + player + "\":\"####\",\"uuid\":\"****\",\"achievements\":{\"bedwars_level\":2222},\"stats\":{\"Bedwars\":{\"final_kills_bedwars\":4444,\"final_deaths_bedwars\":5555}}}}");
+	//	GetRequest(res);
+	//	return;
+	//}
 
 	void Request(wxString qqq2) {
 		wxLogInfo("Requesting " + qqq2);
