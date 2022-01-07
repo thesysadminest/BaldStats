@@ -5,6 +5,7 @@
 #include <wx/textctrl.h>
 #include <wx/menu.h>
 #include <wx/msgdlg.h>
+#include <wx/grid.h>
 #include <wx/webrequest.h> // HTTPS requests
 #include <wx/sstream.h> // reading HTTPS response data
 #include <wx/thread.h> // watching logfile update
@@ -17,10 +18,18 @@ DEFINE_LOCAL_EVENT_TYPE(wxEVT_LOGFILE_UPDATE_EVENT)
 
 
 struct bedwarsPlayer {
-	wxString playername, displayname;
-	int bwlevel, finalk, finald;
+	wxString playername;
+	int bwlevel;
+	float fkdr;
+	int finalk, finald;
 	wxString uuid;
 };
+
+bool operator<(bedwarsPlayer player1, bedwarsPlayer player2) {
+	// -*-*-*-*-
+	if (player1.bwlevel == player2.bwlevel) return player1.fkdr < player2.fkdr;
+	return player1.bwlevel < player2.bwlevel;
+}
 
 
 class LogFileThread : public wxThread {
@@ -64,7 +73,7 @@ private:
 
 class Frame : public wxFrame {
 public:
-	Frame() : wxFrame(nullptr, wxID_ANY, "Testing", wxDefaultPosition, wxSize(500, 500)) {
+	Frame() : wxFrame(nullptr, wxID_ANY, "Testing", wxDefaultPosition, wxSize(1400, 500), wxDEFAULT_FRAME_STYLE /*| wxSTAY_ON_TOP*/) {
 		//button->Bind(wxEVT_BUTTON, &Frame::, this);
 		q1->SetHint("Hypixel API");
 		q1->SetValue("f57c9f4a-175b-430c-a261-d8c199abd927");
@@ -87,10 +96,7 @@ public:
 				wxStringOutputStream out_stream(&*out);
 				evt.GetResponse().GetStream()->Read(out_stream);
 				AddPlayer(out);
-				wxLogInfo("Request success");
-				//wxLogInfo(out);
-				//text->WriteText(out);
-				//return out;
+				wxLogInfo("Request done");
 				break;
 			}
 			// Request failed
@@ -101,14 +107,26 @@ public:
 			});
 
 		//CreateStatusBar();
-		//SetStatusText("Welcome to wxWidgets!");
+		//SetStatusText("Welcome to Bald Stats!");
 
 		//text->SetEditable(false);
 		//q2->SetEditable(false);
 		playerlist.reserve(16);
 		CreateLogFileThread();
-	}
 
+		table->CreateGrid(0, 5);
+		table->SetDefaultCellFont(wxFont(14, wxFONTFAMILY_DEFAULT, wxFONTSTYLE_NORMAL, wxFONTWEIGHT_NORMAL));
+		table->SetDefaultRowSize(28);
+		table->SetColLabelValue(0, "Name");
+		table->SetColLabelValue(1, "Level");
+		table->SetColLabelValue(2, "FKDR");
+		table->SetColLabelValue(3, "Final kills");
+		table->SetColLabelValue(4, "Final deaths");
+		table->SetRowLabelSize(20);
+		table->SetDefaultCellAlignment(wxALIGN_CENTRE, wxALIGN_CENTRE);
+		table->SetDefaultCellOverflow(false);
+	}
+	
 private:
 	wxPanel* panel = new wxPanel(this);
 	wxButton* button = new wxButton(panel, wxID_ANY, wxT("Press Me!"), { 10, 10 });
@@ -116,13 +134,14 @@ private:
 	wxTextCtrl* q1 = new wxTextCtrl(panel, wxID_ANY, wxEmptyString, { 100, 10 }, wxSize((80), (20)));
 	wxTextCtrl* q2 = new wxTextCtrl(panel, wxID_ANY, wxEmptyString, { 200, 10 }, wxSize((80), (20)));
 	wxTextCtrl* command = new wxTextCtrl(panel, wxID_ANY, wxEmptyString, { 50, 370 }, wxSize((400), (20)));
+	wxGrid* table = new wxGrid(panel, -1, {500, 10}, wxSize(800, 400));
 
 	std::vector <bedwarsPlayer> playerlist;
 
 	LogFileThread* m_pThread;
 	DECLARE_EVENT_TABLE();
 
-	void Fake_2_Request(wxCommandEvent& e) {
+	void Fake_Multiple_Request(wxCommandEvent& e) {
 		Request("Buchnick");
 		Request("RaidFern");
 		Request("Jelly_UP");
@@ -153,12 +172,7 @@ private:
 	void ReadLine(wxCommandEvent& evt) {
 		wxString line = *(wxString*)evt.GetClientData();
 		delete evt.GetClientData();
-		//text->WriteText(line);
 		wxLogInfo(line);
-
-		/*if (line.size() < 40) return;
-		if (line.substr(11, 28) != "[Client thread/INFO]: [CHAT]") return;
-		if (line[40] == '§') return; // if current line is message in the chat */
 
 		std::vector<wxString> parsed;
 		wxString temp = wxEmptyString;
@@ -243,8 +257,12 @@ private:
 	}
 
 	bedwarsPlayer GetPlayerStats(wxString* json_ptr) {
-		//wxString json = text->GetValue();
+		int success_pos = JsonGetPos(0, "success", json_ptr);
 		int player_pos = JsonGetPos(0, "player", json_ptr);
+		if (JsonGetValue(success_pos, json_ptr) != "true" || (*json_ptr)[player_pos + 1] != '{') {
+			wxLogInfo("request rejected");
+			return {"", -1, -1, -1, -1, ""};
+		}
 		int displayname_pos = JsonGetPos(player_pos, "displayname", json_ptr);
 		wxString displayname = JsonGetValue(displayname_pos, json_ptr);
 		wxString uuid = JsonGetValue(JsonGetPos(player_pos, "uuid", json_ptr), json_ptr);
@@ -255,38 +273,53 @@ private:
 		wxString s_finalk = JsonGetValue(JsonGetPos(bedwars_pos, "final_kills_bedwars", json_ptr), json_ptr);
 		wxString s_finald = JsonGetValue(JsonGetPos(bedwars_pos, "final_deaths_bedwars", json_ptr), json_ptr);
 		int bwlevel = convertStringToInt(s_bwlevel), finalk = convertStringToInt(s_finalk), finald = convertStringToInt(s_finald);
+		float fkdr;
+		if (finald == 0) fkdr = 1;
+		else fkdr = float(finalk) / finald;
 		/*wxLogMessage(displayname);
 		wxLogMessage(uuid);
 		wxLogMessage(s_bwlevel);
 		wxLogMessage(s_finalk);
 		wxLogMessage(s_finald);*/
-		return { displayname, displayname, bwlevel, finalk, finald, uuid };
+		return { displayname, bwlevel, fkdr, finalk, finald, uuid };
 	}
 
 	void AddPlayer(wxString* response) {
-		//return; // I will remove it later
-		//wxString* request = Fake_Request(player);
 		bedwarsPlayer res = GetPlayerStats(response);
 		delete response;
-		//res.playername = player;
-		playerlist.push_back(res);
-
-		text->Clear();
-		text->WriteText("ACTUAL PLAYER LIST: \n");
-		for (auto i : playerlist) {
-			text->WriteText(i.playername + " " + i.displayname + " " + wxString::Format("%d", i.bwlevel) + " " + wxString::Format("%d", i.finalk) + " " + wxString::Format("%d", i.finald) + " " + i.uuid);
-			text->WriteText('\n');
+		if (res.playername == "") return;
+		unsigned int i = 0;
+		while (i < playerlist.size()) {
+			if (playerlist[i] < res) break;
+			++i;
 		}
+		playerlist.push_back({});
+
+		table->InsertRows(i);
+		table->SetCellValue(wxGridCellCoords(i, 0), res.playername);
+		table->SetCellValue(wxGridCellCoords(i, 1), wxString::Format("%d", res.bwlevel));
+		table->SetCellValue(wxGridCellCoords(i, 2), wxString::Format("%f", res.fkdr));
+		table->SetCellValue(wxGridCellCoords(i, 3), wxString::Format("%d", res.finalk));
+		table->SetCellValue(wxGridCellCoords(i, 4), wxString::Format("%d", res.finald));
+		//table->Update();
+
+		bedwarsPlayer prev = res;
+		while (i < playerlist.size()) {
+			std::swap(prev, playerlist[i]);
+			++i;
+		}
+		return;
 	}
 
 	void RemovePlayer(wxString player) {
-		//return; // I will remove it later
 		unsigned int i = 0;
 		while (true) {
 			if (playerlist[i].playername == player) break;
 			++i;
 			if (i >= playerlist.size()) return;
 		}
+
+		table->DeleteRows(i);
 		if (i != playerlist.size() - 1) {
 			++i;
 			while (i < playerlist.size()) {
@@ -295,12 +328,7 @@ private:
 			}
 		}
 		playerlist.pop_back();
-
-		text->Clear();
-		text->WriteText("ACTUAL PLAYER LIST: \n");
-		for (auto i : playerlist) {
-			text->WriteText(i.playername + " " + i.displayname + " " + wxString::Format("%d", i.bwlevel) + " " + wxString::Format("%d", i.finalk) + " " + wxString::Format("%d", i.finald) + " " + i.uuid);
-		}
+		return;
 	}
 
 	// returns index of ":" in " "key":"value {} []" "
@@ -362,12 +390,6 @@ private:
 		return res;
 	}
 
-	//void Fake_Request(wxCommandEvent& e, wxString player) {
-	//	wxString* res = new wxString("{\"success\":true,\"player\":{\"" + player + "\":\"####\",\"uuid\":\"****\",\"achievements\":{\"bedwars_level\":2222},\"stats\":{\"Bedwars\":{\"final_kills_bedwars\":4444,\"final_deaths_bedwars\":5555}}}}");
-	//	GetRequest(res);
-	//	return;
-	//}
-
 	void Request(wxString qqq2) {
 		wxLogInfo("Requesting " + qqq2);
 		wxWebRequest request = wxWebSession::GetDefault().CreateRequest(
@@ -379,7 +401,6 @@ private:
 			wxLogError("Check request");
 		}
 
-		// Start the request
 		request.Start();
 	}
 };
