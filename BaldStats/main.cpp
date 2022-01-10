@@ -1,16 +1,20 @@
 #include <wx/app.h> // GUI
 #include <wx/frame.h>
 #include <wx/panel.h>
+#include <wx/stattext.h>
 #include <wx/button.h>
 #include <wx/textctrl.h>
 #include <wx/menu.h>
 #include <wx/msgdlg.h>
 #include <wx/grid.h>
+
 #include <wx/webrequest.h> // HTTPS requests
 #include <wx/sstream.h> // reading HTTPS response data
 #include <wx/thread.h> // watching logfile update
 #include <wx/textfile.h> // reading text file
 #include <vector>
+#include <wx/filefn.h> //file existence check
+#include <wx/filedlg.h> //file dialog
 
 
 DECLARE_LOCAL_EVENT_TYPE(wxEVT_LOGFILE_UPDATE_EVENT, -1)
@@ -26,7 +30,7 @@ struct bedwarsPlayer {
 };
 
 bool operator<(bedwarsPlayer player1, bedwarsPlayer player2) {
-	// -*-*-*-*-
+	//TODO: more accurate sorting
 	if (player1.bwlevel == player2.bwlevel) return player1.fkdr < player2.fkdr;
 	return player1.bwlevel < player2.bwlevel;
 }
@@ -34,8 +38,10 @@ bool operator<(bedwarsPlayer player1, bedwarsPlayer player2) {
 
 class LogFileThread : public wxThread {
 public:
-	explicit LogFileThread(wxEvtHandler* parent) : wxThread() {
+	//TODO: re-write using stdio (is faster)
+	explicit LogFileThread(wxEvtHandler* parent, wxString received_logfile_path) : wxThread() {
 		m_parent = parent;
+		logfile_path = received_logfile_path;
 		logfile.Open(logfile_path);
 		logfile_lines_count = logfile.GetLineCount();
 		logfile.Close();
@@ -52,9 +58,7 @@ public:
 					evt.SetClientData(temp_line);
 					m_parent->AddPendingEvent(evt);
 				}
-				else {
-					wxLogInfo("Logline rejected");
-				}
+				else {} //Logline reqected (too short or is message in the chat)
 				++logfile_lines_count;
 			}
 			logfile.Close();
@@ -71,14 +75,48 @@ private:
 };
 
 
+//TODO: custom dialog
+class PreferencesDialog : public wxDialog {
+public:
+	PreferencesDialog(wxWindow* parent) : wxDialog(parent, wxID_ANY, "Preferences", wxDefaultPosition, wxDefaultSize, wxDEFAULT_DIALOG_STYLE) {
+		SetClientSize(400, 200);
+		CenterOnParent();
+		browsePath->Bind(wxEVT_BUTTON, &PreferencesDialog::GetPath, this);
+
+	}
+
+	wxString GetAPI() { return apikey->GetValue(); }
+	wxString GetPath() { return gamelog->GetValue(); }
+
+private:
+	//DECLARE_EVENT_TABLE();
+	//TODO: add api key and latest.log path check
+	wxPanel* panel = new wxPanel(this);
+	wxStaticText* apikey_label = new wxStaticText(panel, wxID_ANY, "Your API key:", { 10, 12 }, wxSize(70, 16));
+	wxTextCtrl* apikey = new wxTextCtrl(panel, wxID_ANY, wxEmptyString, { 85, 10 }, wxSize(305, 20));
+
+	wxStaticText* gamelog_label = new wxStaticText(panel, wxID_ANY, "Path to the minecraft logs:", { 10, 52 }, wxSize(140, 16));
+	wxTextCtrl* gamelog = new wxTextCtrl(panel, wxID_ANY, wxEmptyString, { 160, 50 }, wxSize(160, 20));
+	wxButton* browsePath = new wxButton(panel, wxID_ANY, "Browse...", { 330, 49 }, wxSize(60, 22));
+
+	wxButton* ok_button = new wxButton(panel, wxID_OK, "Ok", { 230, 160 }, wxSize(70, 30));
+	wxButton* cancel_button = new wxButton(panel, wxID_CANCEL, "Cancel", { 310, 160 }, wxSize(70, 30));
+
+	void GetPath(wxCommandEvent& e) {
+		wxFileDialog* filedlg = new wxFileDialog(this, "Path to minecraft \"latest.log\"...", "C:/Users/" + wxGetUserName() + "/AppData/Roaming",
+			wxEmptyString, "Log files (*.log)|*.log", wxFD_OPEN | wxFD_FILE_MUST_EXIST);
+		if (filedlg->ShowModal() == wxID_OK) gamelog->SetValue(filedlg->GetPath());
+	}
+};
+
+
 class Frame : public wxFrame {
 public:
-	Frame() : wxFrame(nullptr, wxID_ANY, "Testing", wxDefaultPosition, wxSize(1400, 500), wxDEFAULT_FRAME_STYLE /*| wxSTAY_ON_TOP*/) {
-		//button->Bind(wxEVT_BUTTON, &Frame::, this);
-		q1->SetHint("Hypixel API");
+	Frame() : wxFrame(nullptr, wxID_ANY, "Bald Stats preview", wxDefaultPosition, wxSize(700, 500), wxDEFAULT_FRAME_STYLE /*| wxSTAY_ON_TOP*/) {
+		//button->Bind(wxEVT_BUTTON, &Frame::test);
+		/*q1->SetHint("Hypixel API");
 		q1->SetValue("f57c9f4a-175b-430c-a261-d8c199abd927");
-		q2->SetHint("Nickname");
-		wxMessageDialog(this, "Please, close this app. It doesn't works properly now", "Important!", wxOK | wxCENTRE | wxICON_ERROR).ShowModal();
+		q2->SetHint("Nickname");*/
 
 		wxMenu* menuMode = new wxMenu;
 		menuMode->AppendRadioItem(1, "BedWars");
@@ -96,12 +134,13 @@ public:
 				wxStringOutputStream out_stream(&*out);
 				evt.GetResponse().GetStream()->Read(out_stream);
 				AddPlayer(out);
-				wxLogInfo("Request done");
+				ApplogWrite("II", "Request done");
 				break;
 			}
 			// Request failed
 			case wxWebRequest::State_Failed:
-				wxLogError(evt.GetErrorDescription());
+				ApplogWrite("EE", "Request failed");
+				ApplogWrite("EI", evt.GetErrorDescription());
 				break;
 			}
 			});
@@ -112,7 +151,6 @@ public:
 		//text->SetEditable(false);
 		//q2->SetEditable(false);
 		playerlist.reserve(16);
-		CreateLogFileThread();
 
 		table->CreateGrid(0, 5);
 		table->SetDefaultCellFont(wxFont(14, wxFONTFAMILY_DEFAULT, wxFONTSTYLE_NORMAL, wxFONTWEIGHT_NORMAL));
@@ -125,23 +163,109 @@ public:
 		table->SetRowLabelSize(20);
 		table->SetDefaultCellAlignment(wxALIGN_CENTRE, wxALIGN_CENTRE);
 		table->SetDefaultCellOverflow(false);
+
+		InitializeFolders();
+		CreateLogFileThread();
 	}
-	
+
 private:
 	wxPanel* panel = new wxPanel(this);
-	wxButton* button = new wxButton(panel, wxID_ANY, wxT("Press Me!"), { 10, 10 });
-	wxTextCtrl* text = new wxTextCtrl(panel, wxID_ANY, wxEmptyString, { 50, 50 }, wxSize((400), (300)), wxTE_MULTILINE);
+	//wxButton* button = new wxButton(panel, 10, wxT("Press Me!"), { 10, 10 });
+	/*wxTextCtrl* text = new wxTextCtrl(panel, wxID_ANY, wxEmptyString, { 50, 50 }, wxSize((400), (300)), wxTE_MULTILINE);
 	wxTextCtrl* q1 = new wxTextCtrl(panel, wxID_ANY, wxEmptyString, { 100, 10 }, wxSize((80), (20)));
 	wxTextCtrl* q2 = new wxTextCtrl(panel, wxID_ANY, wxEmptyString, { 200, 10 }, wxSize((80), (20)));
-	wxTextCtrl* command = new wxTextCtrl(panel, wxID_ANY, wxEmptyString, { 50, 370 }, wxSize((400), (20)));
-	wxGrid* table = new wxGrid(panel, -1, {500, 10}, wxSize(800, 400));
+	wxTextCtrl* command = new wxTextCtrl(panel, wxID_ANY, wxEmptyString, { 50, 370 }, wxSize((400), (20)));*/
+	wxGrid* table = new wxGrid(panel, -1, { 10, 10 }, wxSize(600, 400));
 
 	std::vector <bedwarsPlayer> playerlist;
 
-	LogFileThread* m_pThread;
+	LogFileThread* lfThread;
 	DECLARE_EVENT_TABLE();
 
-	void Fake_Multiple_Request(wxCommandEvent& e) {
+	wxString appwd = wxEmptyString; //app working directory
+	wxDateTime time; //current time
+	wxTextFile applog; //app logfile
+	//TODO: normal settings struct
+	wxString API_key = wxEmptyString; //user API key
+	wxString logfile_path = wxEmptyString; //path to minecradt logfile
+
+	void InitializeFolders() {
+		appwd = wxGetCwd();
+		bool is_logfile_created_now = false;
+		if (!wxFileExists("logfile.txt")) {
+			wxTextFile temp_log;
+			temp_log.Create("logfile.txt");
+			is_logfile_created_now = true;
+		}
+
+		applog.Open("logfile.txt");
+		ApplogWrite("ST", "");
+		ApplogWrite("ST", "Program launched");
+		ApplogWrite("ST", "Current date: " + wxNow());
+		if (is_logfile_created_now) ApplogWrite("ST", "Applog was missing, created successfully");
+
+		if (!wxFileExists("config.txt")) {
+			wxTextFile temp_cfg;
+			temp_cfg.Create("config.txt");
+			ApplogWrite("ST", "Config file was missing, created successfully. Asking user for settings...");
+			ConfigDialog();
+			ApplogWrite("ST", "Settings are: API key:" + API_key + " , path to logs: " + logfile_path);
+			wxTextFile cfgFile;
+			cfgFile.Open("config.txt");
+			cfgFile.AddLine("apikey\t" + API_key);
+			cfgFile.AddLine("gamelogpath\t" + logfile_path);
+			cfgFile.Write();
+			cfgFile.Close();
+			ApplogWrite("ST", "Preferences are successfully written");
+		}
+		else {
+			wxTextFile cfgFile;
+			cfgFile.Open("config.txt");
+			unsigned int line_num = 0;
+			while (line_num < cfgFile.GetLineCount()) {
+				wxString line = cfgFile.GetLine(line_num);
+				++line_num;
+				wxString param = wxEmptyString, value = wxEmptyString;
+				unsigned int c = 0;
+				while (c < line.size() && line[c] != '\t') { param.Append(line[c]); ++c; }
+				++c;
+				if (c > line.size()) {
+					//TODO: fatal error: broken cfgfile
+				}
+				while (c < line.size()) { value.Append(line[c]); ++c; }
+
+				//TODO: check if all data is present and valid
+				if (param == "apikey") API_key = value;
+				else if (param == "gamelogpath") logfile_path = value;
+			}
+		}
+		ApplogWrite("ST", "End of program initialization");
+		return;
+	}
+
+	void ConfigDialog() {
+		PreferencesDialog* dialog = new PreferencesDialog(this);
+		if (dialog->ShowModal() == wxID_OK) {
+			API_key = dialog->GetAPI();
+			logfile_path = dialog->GetPath();
+		}
+		//TODO: else...
+		return;
+	}
+
+	void ApplogWrite(wxString status, wxString line) {
+		//[ST] - program status and user actions, [LL] - logline content, 
+		//[II] - information, [WW] - warning, 
+		//[EE] - error, [FF] - fatal error, [EI] - useful error information
+		time.Set((time_t)wxGetUTCTime());
+		applog.AddLine("[" + status + "] [" + wxString::Format("%d", (int)time.GetHour()) +
+			":" + wxString::Format("%d", (int)time.GetMinute()) +
+			":" + wxString::Format("%d", (int)time.GetSecond()) + "] " + line);
+		applog.Write();
+		return;
+	}
+
+	/*void Fake_Multiple_Request(wxCommandEvent& e) {
 		Request("Buchnick");
 		Request("RaidFern");
 		Request("Jelly_UP");
@@ -150,29 +274,34 @@ private:
 		Request("CA62851158");
 		Request("Minisamufi");
 		Request("Lukefain10");
-	}
+	}*/
 
 	void CreateLogFileThread() {
-		m_pThread = new LogFileThread(this);
-		wxThreadError err = m_pThread->Create();
+		ApplogWrite("ST", "Creating a logfile thread");
+		lfThread = new LogFileThread(this, logfile_path);
 
+		wxThreadError err = lfThread->Create();
 		if (err != wxTHREAD_NO_ERROR) {
-			wxMessageBox(_("Couldn't create thread!"));
+			ApplogWrite("FE", "Couldn't create thread!");
+			ApplogWrite("EI", "Error code: " + wxString::Format("%d", err));
 			return;
 		}
 
-		err = m_pThread->Run();
-
+		err = lfThread->Run();
 		if (err != wxTHREAD_NO_ERROR) {
-			wxMessageBox(_("Couldn't run thread!"));
+			ApplogWrite("FE", "Couldn't run thread!");
+			ApplogWrite("EI", "Error code: " + wxString::Format("%d", err));
 			return;
 		}
+
+		ApplogWrite("ST", "Logfile thread created successfully!");
+		return;
 	}
 
 	void ReadLine(wxCommandEvent& evt) {
 		wxString line = *(wxString*)evt.GetClientData();
 		delete evt.GetClientData();
-		wxLogInfo(line);
+		ApplogWrite("LL", line);
 
 		std::vector<wxString> parsed;
 		wxString temp = wxEmptyString;
@@ -184,65 +313,67 @@ private:
 			else temp.append(line[i]);
 		}
 		if (!temp.empty()) parsed.push_back(temp);
-		//for (auto i : parsed) wxLogInfo(i);
 
 		if (parsed.size() == 3) {
 			// player quits the lobby
 			if (parsed[1] == "has" && parsed[2] == "quit!") {
-				wxLogInfo("player quits the lobby");
+				ApplogWrite("II", "Player quits the lobby");
 				RemovePlayer(parsed[0]);
 			}
 		}
 		else if (parsed.size() == 4) {
 			// player joins the party
 			if (parsed[1] == "joined" && parsed[3] == "party") {
-				wxLogInfo("player joins the party");
+				ApplogWrite("II", "Player joins the party");
 				Request(parsed[0]);
 			}
 			// you leave the party
 			else if (parsed[0] == "You" && parsed[1] == "left") {
-				wxLogInfo("you leave the party");
-				//DisbandParty()
+				ApplogWrite("II", "You leave the party");
+				DisbandParty();
 			}
 			// player joins the lobby
 			else if (parsed[1] == "has" && parsed[2] == "joined") {
-				wxLogInfo("player joins the lobby");
+				ApplogWrite("II", "Player joins the lobby");
 				//Request(parsed[0]);
 			}
 		}
 		else if (parsed.size() == 5) {
 			// player leaves the party
 			if (parsed[2] == "left" && parsed[4] == "party") {
-				wxLogInfo("player leaves the party");
+				ApplogWrite("II", "Player leaves the party");
 				RemovePlayer(parsed[0]);
 			}
 			// you join someone else's party
 			else if (parsed[0] == "You" && parsed[4] == "party!") {
-				wxLogInfo("you join someone else's party");
+				ApplogWrite("II", "You join someone else's party");
 				Request(parsed[3].substr(0, parsed[3].size() - 2));
 			}
 		}
 		else if (parsed.size() == 7) {
 			// player gets removed from the party
 			if (parsed[1] == "has" && parsed[3] == "removed") {
-				wxLogInfo("player gets removed from the party");
+				ApplogWrite("II", "Player gets removed from the party");
 				RemovePlayer(parsed[0]);
 			}
 		}
 		else if (parsed.size() == 9 || parsed.size() == 12) {
 			// party gets disbanded
 			if (parsed[1] == "party" && parsed[3] == "disbanded") {
-				wxLogInfo("the party gets disbanded");
-				//DisbandParty()
+				ApplogWrite("II", "The party gets disbanded");
+				DisbandParty();
 			}
 		}
 		// lobby players list
 		else if (parsed[0] == "ONLINE:") {
-			wxLogInfo("lobby players list");
+			ApplogWrite("II", "Lobby players list");
 		}
 		// party players list
 		else if (parsed[0] == "You'll" && parsed[2] == "partying") {
-			wxLogInfo("party players list");
+			ApplogWrite("II", "Party players list");
+			wxString player = wxEmptyString;
+			for (unsigned int i = 4; i < parsed.size(); ++i)
+				Request(parsed[i].substr(0, parsed[i].size() - 1));
 		}
 		return;
 	}
@@ -260,8 +391,8 @@ private:
 		int success_pos = JsonGetPos(0, "success", json_ptr);
 		int player_pos = JsonGetPos(0, "player", json_ptr);
 		if (JsonGetValue(success_pos, json_ptr) != "true" || (*json_ptr)[player_pos + 1] != '{') {
-			wxLogInfo("request rejected");
-			return {"", -1, -1, -1, -1, ""};
+			ApplogWrite("WW", "Request rejected by server");
+			return { "", -1, -1, -1, -1, "" };
 		}
 		int displayname_pos = JsonGetPos(player_pos, "displayname", json_ptr);
 		wxString displayname = JsonGetValue(displayname_pos, json_ptr);
@@ -308,11 +439,13 @@ private:
 			std::swap(prev, playerlist[i]);
 			++i;
 		}
+		ApplogWrite("II", "Player " + res.playername + " was added to playerlist");
 		return;
 	}
 
 	void RemovePlayer(wxString player) {
 		unsigned int i = 0;
+		if (playerlist.size() == 0) return;
 		while (true) {
 			if (playerlist[i].playername == player) break;
 			++i;
@@ -328,7 +461,14 @@ private:
 			}
 		}
 		playerlist.pop_back();
+		ApplogWrite("II", "Player " + player + " was removed from playerlist");
 		return;
+	}
+
+	void DisbandParty() {
+		playerlist.clear();
+		table->DeleteRows(0, table->GetNumberRows());
+		ApplogWrite("II", "Playerlist and table were cleared");
 	}
 
 	// returns index of ":" in " "key":"value {} []" "
@@ -390,18 +530,20 @@ private:
 		return res;
 	}
 
-	void Request(wxString qqq2) {
-		wxLogInfo("Requesting " + qqq2);
+	void Request(wxString player) {
+		ApplogWrite("II", "Sending a request, player: " + player);
 		wxWebRequest request = wxWebSession::GetDefault().CreateRequest(
 			this,
-			"https://api.hypixel.net/player?key=" + q1->GetValue() + "&name=" + qqq2
+			"https://api.hypixel.net/player?key=" + API_key + "&name=" + player
 		);
 
 		if (!request.IsOk()) {
-			wxLogError("Check request");
+			ApplogWrite("EE", "Invalid request:");
+			ApplogWrite("EI", "https://api.hypixel.net/player?key=" + API_key + "&name=" + player);
 		}
 
 		request.Start();
+		return;
 	}
 };
 
@@ -418,47 +560,5 @@ class Program : public wxApp {
 	}
 };
 
+
 wxIMPLEMENT_APP(Program);
-
-
-//	REQUESTS
-		//	wxString request_str = "key=f57c9f4a-175b-430c-a261-d8c199abd927&name=usainbald";
-		//	//http.SetHeader("content-type", "application/x-www-form-urlencoded");
-		//	//http.SetHeader("content-length", wxString::Format(wxT("%d"), request_str.Length()));
-		//	//http.SetHeader("accept", "*/*");
-		//	//http.SetHeader("user-agent", "runscope/0.1");
-		//	http.SetTimeout(10);
-		//	http.SetPostText("application/x-www-form-urlencoded", request_str);
-		//	//http.SetMethod("POST");
-		//	//wxLogInfo(http.GetHeader(_T("connection")));
-		//	http.Connect(_T("api.hypixel.net"), 443);
-		//	//http.Connect(_T("www.snee.com"));
-		//	//wxSleep(1);
-		//	//if (!wxApp::IsMainLoopRunning()) wxLogError("AAAA");
-		//	wxInputStream* stream = http.GetInputStream(_T("/player"));
-		//	wxLogInfo(wxString(_T(" GetInputStream: ")) << http.GetResponse() << _T("-") << http.GetError());
-		//	//wxSleep(1);
-		//	if (http.GetError() == wxPROTO_NOERR) {
-		//		wxLogInfo(http.GetHeader("location"));
-		//		wxString res = wxEmptyString;
-		//		wxStringOutputStream output_res(&res);
-		//		stream->Read(output_res);
-		//		text->AppendText(res);
-		//		//wxLogInfo(res);
-		//		wxLogInfo(wxString(_T(" returned document length: ")) << res.Length());
-		//	}
-		//	else {
-		//		switch (http.GetError()) {
-		//		case wxPROTO_ABRT: {wxLogError("wxPROTO_ABRT"); break; }
-		//		case wxPROTO_CONNERR: {wxLogError("wxPROTO_CONNERR"); break; }
-		//		case wxPROTO_INVVAL: {wxLogError("wxPROTO_INVVAL"); break; }
-		//		case wxPROTO_NETERR: {wxLogError("wxPROTO_NETERR");  break; }
-		//		case wxPROTO_NOFILE: {wxLogError("wxPROTO_NOFILE"); break; }
-		//		case wxPROTO_NOHNDLR: {wxLogError("wxPROTO_NOHNDLR"); break; }
-		//		case wxPROTO_PROTERR: {wxLogError("wxPROTO_PROTERR"); break; }
-		//		case wxPROTO_RCNCT: {wxLogError("wxPROTO_RCNCT"); break; }
-		//		case wxPROTO_STREAMING: {wxLogError("wxPROTO_STREAMING"); break; }
-		//		}
-		//	}
-		//	wxDELETE(stream);
-		//	http.Close();
