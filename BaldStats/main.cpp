@@ -7,6 +7,7 @@
 #include <wx/menu.h>
 #include <wx/msgdlg.h>
 #include <wx/grid.h>
+#include <wx/sizer.h>
 
 #include <wx/webrequest.h> // HTTPS requests
 #include <wx/sstream.h> // reading HTTPS response data
@@ -36,6 +37,12 @@ bool operator<(bedwarsPlayer player1, bedwarsPlayer player2) {
 }
 
 
+struct AppPreferences {
+	wxString API_key = wxEmptyString; //user API key
+	wxString logfile_path = wxEmptyString; //path to minecradt logfile
+};
+
+
 class LogFileThread : public wxThread {
 public:
 	//TODO: re-write using stdio (is faster)
@@ -50,6 +57,7 @@ public:
 	ExitCode Entry() {
 		while (true) {
 			logfile.Open(logfile_path);
+			if (logfile_lines_count > logfile.GetLineCount()) logfile_lines_count = logfile.GetLineCount();
 			while (logfile_lines_count != logfile.GetLineCount()) {
 				wxString* temp_line = new wxString();
 				*temp_line = logfile.GetLine(logfile_lines_count);
@@ -71,41 +79,155 @@ private:
 	wxEvtHandler* m_parent;
 	int logfile_lines_count;
 	wxTextFile logfile;
-	wxString logfile_path = "D:/Programming/C++/BaldStats/a.txt";
+	wxString logfile_path;
 };
 
 
-//TODO: custom dialog
 class PreferencesDialog : public wxDialog {
 public:
-	PreferencesDialog(wxWindow* parent) : wxDialog(parent, wxID_ANY, "Preferences", wxDefaultPosition, wxDefaultSize, wxDEFAULT_DIALOG_STYLE) {
-		SetClientSize(400, 200);
+	PreferencesDialog(wxWindow* parent, AppPreferences config)
+		: wxDialog(parent, wxID_ANY, "Preferences", wxDefaultPosition, wxDefaultSize, wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER) {
 		CenterOnParent();
-		browsePath->Bind(wxEVT_BUTTON, &PreferencesDialog::GetPath, this);
+		detectpath_button->Bind(wxEVT_BUTTON, &PreferencesDialog::LinkLauncher, this);
+		browsepath_button->Bind(wxEVT_BUTTON, &PreferencesDialog::GetPath, this);
 
+		apikey_field->SetValue(config.API_key);
+		if (config.API_key != wxEmptyString)
+			apikey_field->SetMinSize(apikey_field->GetSizeFromText(config.API_key));
+		else apikey_field->SetMinSize(wxSize(200, 23));
+
+		logpath_field->SetValue(config.logfile_path);
+
+		api_sizer->Add(
+			new wxStaticText(this, wxID_ANY, "Your API key:"),
+			0, wxALL | wxALIGN_CENTER_VERTICAL, 10
+		);
+		api_sizer->Add(
+			apikey_field,
+			1, wxALL, 10
+		);
+
+		filepath_text_sizer->Add(
+			new wxStaticText(this, wxID_ANY, "Minecraft logs path:"),
+			0, wxALL | wxALIGN_CENTER_VERTICAL, 10
+		);
+		filepath_text_sizer->Add(
+			logpath_field,
+			1, wxALL, 10
+		);
+
+		filepath_buttons_sizer->Add(
+			detectpath_button,
+			0, wxALL, 10
+		);
+		filepath_buttons_sizer->Add(
+			browsepath_button,
+			0, wxALL, 10
+		);
+
+		filepath_sizer->Add(filepath_text_sizer, 1, wxEXPAND);
+		filepath_sizer->Add(
+			client_status,
+			0, wxALIGN_CENTER
+		);
+		filepath_sizer->Add(filepath_buttons_sizer, 1, wxALIGN_CENTER);
+
+		dialog_buttons_sizer->Add(
+			new wxButton(this, wxID_OK, "Ok"),
+			0, wxALL, 10
+		);
+		dialog_buttons_sizer->Add(
+			new wxButton(this, wxID_CANCEL, "Cancel"),
+			0, wxALL, 10
+		);
+
+		sizer->Add(api_sizer, 0, wxEXPAND);
+		sizer->Add(filepath_sizer, 0, wxEXPAND);
+		sizer->Add(dialog_buttons_sizer, 1, wxALIGN_RIGHT);
+		SetSizerAndFit(sizer);
+		LinkLauncher();
 	}
 
-	wxString GetAPI() { return apikey->GetValue(); }
-	wxString GetPath() { return gamelog->GetValue(); }
+	AppPreferences GetConfigs() {
+		return AppPreferences{
+			apikey_field->GetValue(), logpath_field->GetValue()
+		};
+	}
 
 private:
 	//DECLARE_EVENT_TABLE();
 	//TODO: add api key and latest.log path check
-	wxPanel* panel = new wxPanel(this);
-	wxStaticText* apikey_label = new wxStaticText(panel, wxID_ANY, "Your API key:", { 10, 12 }, wxSize(70, 16));
-	wxTextCtrl* apikey = new wxTextCtrl(panel, wxID_ANY, wxEmptyString, { 85, 10 }, wxSize(305, 20));
+	wxBoxSizer* sizer = new wxBoxSizer(wxVERTICAL);
+	wxBoxSizer* api_sizer = new wxBoxSizer(wxHORIZONTAL);
+	wxBoxSizer* filepath_sizer = new wxBoxSizer(wxVERTICAL);
+	wxBoxSizer* filepath_text_sizer = new wxBoxSizer(wxHORIZONTAL);
+	wxBoxSizer* filepath_buttons_sizer = new wxBoxSizer(wxHORIZONTAL);
+	wxBoxSizer* dialog_buttons_sizer = new wxBoxSizer(wxHORIZONTAL);
 
-	wxStaticText* gamelog_label = new wxStaticText(panel, wxID_ANY, "Path to the minecraft logs:", { 10, 52 }, wxSize(140, 16));
-	wxTextCtrl* gamelog = new wxTextCtrl(panel, wxID_ANY, wxEmptyString, { 160, 50 }, wxSize(160, 20));
-	wxButton* browsePath = new wxButton(panel, wxID_ANY, "Browse...", { 330, 49 }, wxSize(60, 22));
+	wxTextCtrl* apikey_field = new wxTextCtrl(this, wxID_ANY);
+	wxTextCtrl* logpath_field = new wxTextCtrl(this, wxID_ANY);
+	wxStaticText* client_status = new wxStaticText(this, wxID_ANY, "Delete this later"); //delete that later
+	wxButton* detectpath_button = new wxButton(this, wxID_ANY, "Detect minecraft launcher");
+	wxButton* browsepath_button = new wxButton(this, wxID_ANY, "Browse...");
 
-	wxButton* ok_button = new wxButton(panel, wxID_OK, "Ok", { 230, 160 }, wxSize(70, 30));
-	wxButton* cancel_button = new wxButton(panel, wxID_CANCEL, "Cancel", { 310, 160 }, wxSize(70, 30));
+
+	void LinkLauncher(bool is_from_button = false) {
+		wxString user = wxGetUserName();
+		std::pair<wxString, wxString> last = { wxEmptyString, wxEmptyString };
+		std::vector <std::pair <wxString, wxString>> client_list = {
+			{"C:/Users/" + user + "/AppData/Roaming/.minecraft/logs/latest.log", "Official Launcher"},
+			{"C:/Users/" + user + "/.lunarclient/offline/1.8/logs/latest.log", "Lunar Client"},
+			{"C:/Users/" + user + "/AppData/Roaming/.minecraft/logs/blclient/chat/latest.log", "Badlion Client"},
+			{"C:/Users/" + user + "/AppData/.pvplounge/logs/latest.log", "PVPLounge Client"}
+		};
+		if (is_from_button) {
+			for (std::pair <wxString, wxString> i : client_list) {
+				if (wxFileExists(i.first)) {
+					if (last.first == wxEmptyString) { last = i; continue; }
+					if (wxFileModificationTime(last.first) < wxFileModificationTime(i.first)) last = i;
+				}
+			}
+
+			if (last.first == wxEmptyString) {
+				logpath_field->SetValue(wxEmptyString);
+				client_status->SetForegroundColour(wxColour(150, 0, 0));
+				client_status->SetLabel("Can't detect your launcher! Try to manually specify the path");
+			}
+			else {
+				logpath_field->SetValue(last.first);
+				client_status->SetForegroundColour(wxColour(0, 150, 0));
+				client_status->SetLabel("Linked to " + last.second);
+			}
+		}
+		else {
+			wxString cur = apikey_field->GetValue();
+			bool client_detected = false;
+			for (std::pair <wxString, wxString> i : client_list) {
+				if (cur == i.first) {
+					client_status->SetForegroundColour(wxColour(0, 150, 0));
+					client_status->SetLabel("Linked to " + i.second);
+					client_detected = true;
+					break;
+				}
+			}
+			if (!client_detected) {
+				client_status->SetForegroundColour(wxColour(100, 150, 0));
+				client_status->SetLabel("Linked to other launcher");
+			}
+		}
+		return;
+	}
+
+	void LinkLauncher(wxCommandEvent& e) {
+		LinkLauncher(true);
+		return;
+	}
 
 	void GetPath(wxCommandEvent& e) {
 		wxFileDialog* filedlg = new wxFileDialog(this, "Path to minecraft \"latest.log\"...", "C:/Users/" + wxGetUserName() + "/AppData/Roaming",
 			wxEmptyString, "Log files (*.log)|*.log", wxFD_OPEN | wxFD_FILE_MUST_EXIST);
-		if (filedlg->ShowModal() == wxID_OK) gamelog->SetValue(filedlg->GetPath());
+		if (filedlg->ShowModal() == wxID_OK) logpath_field->SetValue(filedlg->GetPath());
+		LinkLauncher();
 	}
 };
 
@@ -119,11 +241,16 @@ public:
 		q2->SetHint("Nickname");*/
 
 		wxMenu* menuMode = new wxMenu;
+		wxMenu* menuEdit = new wxMenu;
+		wxMenu* menuHelp = new wxMenu;
 		menuMode->AppendRadioItem(1, "BedWars");
 		menuMode->AppendRadioItem(2, "SkyWars");
 		menuMode->Enable(2, false);
+		menuEdit->Append(500, "Preferences");
 		wxMenuBar* menuBar = new wxMenuBar;
 		menuBar->Append(menuMode, "&Mode");
+		menuBar->Append(menuEdit, "&Edit");
+		menuBar->Append(menuHelp, "&Help");
 		SetMenuBar(menuBar);
 
 		Bind(wxEVT_WEBREQUEST_STATE, [this](wxWebRequestEvent& evt) {
@@ -182,15 +309,12 @@ private:
 	LogFileThread* lfThread;
 	DECLARE_EVENT_TABLE();
 
-	wxString appwd = wxEmptyString; //app working directory
 	wxDateTime time; //current time
 	wxTextFile applog; //app logfile
 	//TODO: normal settings struct
-	wxString API_key = wxEmptyString; //user API key
-	wxString logfile_path = wxEmptyString; //path to minecradt logfile
+	AppPreferences config;
 
 	void InitializeFolders() {
-		appwd = wxGetCwd();
 		bool is_logfile_created_now = false;
 		if (!wxFileExists("logfile.txt")) {
 			wxTextFile temp_log;
@@ -209,13 +333,13 @@ private:
 			temp_cfg.Create("config.txt");
 			ApplogWrite("ST", "Config file was missing, created successfully. Asking user for settings...");
 			ConfigDialog();
-			ApplogWrite("ST", "Settings are: API key:" + API_key + " , path to logs: " + logfile_path);
-			wxTextFile cfgFile;
+			ApplogWrite("ST", "Settings are: API key:" + config.API_key + " , path to logs: " + config.logfile_path);
+			/*wxTextFile cfgFile;
 			cfgFile.Open("config.txt");
-			cfgFile.AddLine("apikey\t" + API_key);
-			cfgFile.AddLine("gamelogpath\t" + logfile_path);
+			cfgFile.AddLine("apikey\t" + config.API_key);
+			cfgFile.AddLine("gamelogpath\t" + config.logfile_path);
 			cfgFile.Write();
-			cfgFile.Close();
+			cfgFile.Close();*/
 			ApplogWrite("ST", "Preferences are successfully written");
 		}
 		else {
@@ -235,22 +359,66 @@ private:
 				while (c < line.size()) { value.Append(line[c]); ++c; }
 
 				//TODO: check if all data is present and valid
-				if (param == "apikey") API_key = value;
-				else if (param == "gamelogpath") logfile_path = value;
+				if (param == "apikey") config.API_key = value;
+				else if (param == "gamelogpath") config.logfile_path = value;
 			}
+			while (!CheckConfigs()) ConfigDialog();
 		}
 		ApplogWrite("ST", "End of program initialization");
 		return;
 	}
 
 	void ConfigDialog() {
-		PreferencesDialog* dialog = new PreferencesDialog(this);
-		if (dialog->ShowModal() == wxID_OK) {
-			API_key = dialog->GetAPI();
-			logfile_path = dialog->GetPath();
-		}
+		PreferencesDialog* dialog = new PreferencesDialog(this, config);
+		if (dialog->ShowModal() == wxID_OK)
+			UpdateConfigs(dialog->GetConfigs());
+
 		//TODO: else...
 		return;
+	}
+
+	void ConfigDialog(wxCommandEvent& e) {
+		ConfigDialog();
+		return;
+	}
+
+	void ChangeConfig(wxTextFile& cfgFile, wxString param, wxString value) {
+		unsigned int line_num = 0;
+		bool param_written = false;
+		while (line_num < cfgFile.GetLineCount()) {
+			wxString line = cfgFile.GetLine(line_num);
+			unsigned int c = 0;
+			bool param_found = true;
+			while (c < line.size() && line[c] != '\t') {
+				if (c >= param.size() || line[c] != param[c]) { param_found = false; break; }
+				++c;
+			}
+			if (!param_found) { ++line_num; continue; }
+
+			param_written = true;
+			cfgFile.RemoveLine(line_num);
+			cfgFile.InsertLine(param + '\t' + value, line_num);
+			break;
+		}
+		if (!param_written) cfgFile.AddLine(param + '\t' + value);
+		return;
+	}
+
+	void UpdateConfigs(AppPreferences config_new) {
+		wxTextFile cfgFile;
+		cfgFile.Open("config.txt");
+		if (config.API_key != config_new.API_key) ChangeConfig(cfgFile, "apikey", config_new.API_key);
+		if (config.logfile_path != config_new.logfile_path) ChangeConfig(cfgFile, "gamelogpath", config_new.logfile_path);
+		cfgFile.Write();
+		cfgFile.Close();
+		config = config_new;
+		return;
+	}
+
+	bool CheckConfigs() {
+		if (config.API_key == wxEmptyString || config.logfile_path == wxEmptyString) return false;
+		if (!wxFileExists(config.logfile_path)) { config.logfile_path = wxEmptyString; return false; }
+		return true;
 	}
 
 	void ApplogWrite(wxString status, wxString line) {
@@ -278,7 +446,7 @@ private:
 
 	void CreateLogFileThread() {
 		ApplogWrite("ST", "Creating a logfile thread");
-		lfThread = new LogFileThread(this, logfile_path);
+		lfThread = new LogFileThread(this, config.logfile_path);
 
 		wxThreadError err = lfThread->Create();
 		if (err != wxTHREAD_NO_ERROR) {
@@ -305,7 +473,9 @@ private:
 
 		std::vector<wxString> parsed;
 		wxString temp = wxEmptyString;
-		for (unsigned int i = 40; i < line.size(); ++i) {
+		short int linesize = line.size();
+		if (*line.end() == '!' || *line.end() == '.') --linesize;
+		for (unsigned int i = 40; i < linesize; ++i) {
 			if (line[i] == ' ') {
 				if (temp[0] != '[' && temp[temp.size() - 1] != ']') parsed.push_back(temp);
 				temp = wxEmptyString;
@@ -316,7 +486,7 @@ private:
 
 		if (parsed.size() == 3) {
 			// player quits the lobby
-			if (parsed[1] == "has" && parsed[2] == "quit!") {
+			if (parsed[1] == "has" && parsed[2] == "quit") {
 				ApplogWrite("II", "Player quits the lobby");
 				RemovePlayer(parsed[0]);
 			}
@@ -345,7 +515,7 @@ private:
 				RemovePlayer(parsed[0]);
 			}
 			// you join someone else's party
-			else if (parsed[0] == "You" && parsed[4] == "party!") {
+			else if (parsed[0] == "You" && parsed[4] == "party") {
 				ApplogWrite("II", "You join someone else's party");
 				Request(parsed[3].substr(0, parsed[3].size() - 2));
 			}
@@ -363,15 +533,23 @@ private:
 				ApplogWrite("II", "The party gets disbanded");
 				DisbandParty();
 			}
+			// player gets removed from the party
+			else if (parsed[1] == "was" && parsed[2] == "removed") {
+				ApplogWrite("II", "Player gets removed from the party");
+				RemovePlayer(parsed[0]);
+			}
 		}
 		// lobby players list
-		else if (parsed[0] == "ONLINE:") {
+		if (parsed[0] == "ONLINE:") {
 			ApplogWrite("II", "Lobby players list");
+			parsed.back() += '.'; //TODO: check if it works
+			for (unsigned int i = 1; i < parsed.size(); ++i)
+				Request(parsed[i].substr(0, parsed[i].size() - 1));
 		}
 		// party players list
-		else if (parsed[0] == "You'll" && parsed[2] == "partying") {
+		else if (parsed.size() > 3 && parsed[0] == "You'll" && parsed[2] == "partying") {
 			ApplogWrite("II", "Party players list");
-			wxString player = wxEmptyString;
+			parsed.back() += '.'; //TODO: check if it works
 			for (unsigned int i = 4; i < parsed.size(); ++i)
 				Request(parsed[i].substr(0, parsed[i].size() - 1));
 		}
@@ -534,12 +712,12 @@ private:
 		ApplogWrite("II", "Sending a request, player: " + player);
 		wxWebRequest request = wxWebSession::GetDefault().CreateRequest(
 			this,
-			"https://api.hypixel.net/player?key=" + API_key + "&name=" + player
+			"https://api.hypixel.net/player?key=" + config.API_key + "&name=" + player
 		);
 
 		if (!request.IsOk()) {
 			ApplogWrite("EE", "Invalid request:");
-			ApplogWrite("EI", "https://api.hypixel.net/player?key=" + API_key + "&name=" + player);
+			ApplogWrite("EI", "https://api.hypixel.net/player?key=" + config.API_key + "&name=" + player);
 		}
 
 		request.Start();
@@ -547,9 +725,10 @@ private:
 	}
 };
 
-
+//5xx - preferences
 BEGIN_EVENT_TABLE(Frame, wxFrame)
 EVT_COMMAND(wxID_ANY, wxEVT_LOGFILE_UPDATE_EVENT, Frame::ReadLine)
+EVT_MENU(500, Frame::ConfigDialog)
 END_EVENT_TABLE()
 
 
